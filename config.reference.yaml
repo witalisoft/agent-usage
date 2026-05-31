@@ -1,0 +1,35 @@
+# ── agent-usage configuration reference ───────────────────────────────
+# This is the FULL reference with defaults. Your real config.yaml only
+# needs the keys you want to change; everything omitted falls back here.
+
+# How often (seconds) the background poller samples usage. Global default;
+# can be overridden per agent.
+poll_interval: 60
+
+# Per-agent settings. Any detected agent not listed here is still monitored
+# with all defaults (no scripts).
+agents:
+
+  claude:
+    # poll_interval: 60          # override global cadence for this agent
+    # Known metrics: 5h, 7day.
+    # Fire a shell command once each time a metric crosses `threshold`
+    # (re-armed when it drops back under). Env vars injected: AGENT,
+    # LIMIT_NAME, PERCENT, THRESHOLD, TIMESTAMP. Agent keeps running.
+    scripts: []
+    # scripts:
+    #   - metric: 7day
+    #     threshold: 80
+    #     cmd: "notify-send 'Claude ${PERCENT}% of ${LIMIT_NAME}'"
+
+  codex:
+    # Known metrics: 5h (primary_window), weekly (secondary_window).
+    scripts: []
+
+  copilot:
+    # Copilot percent = totalUsage / limit * 100. GitHub does NOT report the
+    # plan, so set it here (default pro/300). `limit` overrides `plan`.
+    plan: pro                    # pro | business | enterprise | ...
+    # limit: 300                 # explicit monthly premium-request quota
+    # Known metric: monthly.
+    scripts: []

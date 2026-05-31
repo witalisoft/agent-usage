@@ -1,0 +1,45 @@
+[project]
+name = "agent-usage"
+version = "0.1.0"
+description = "Monitor AI coding agent subscriptions, launch agents, and hand off sessions between them."
+readme = "README.md"
+authors = [
+    { name = "Witold Duranek", email = "contact@witalis.net" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "attrs>=24.0",
+    "inquirerpy>=0.3.4",
+    "platformdirs>=4.0",
+    "pyyaml>=6.0",
+    "requests>=2.32",
+    "rich>=13.0",
+]
+
+[project.scripts]
+agent-usage = "agent_usage.cli:main"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.0",
+    "pytest>=8.0",
+    "ruff>=0.9",
+    "ty>=0.0.1a0",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agent_usage"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
