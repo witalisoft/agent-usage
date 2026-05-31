@@ -1,5 +1,9 @@
 # agent-usage
 
+<p align="center">
+<img width="671" height="167" alt="image" src="https://github.com/user-attachments/assets/a3169f04-537e-4114-bd89-31472f323bdd" />
+</p>
+
 A single command-line tool to discover installed AI coding agents, monitor the subscription usage of each one, list all sessions from the current directory, and trigger a custom script when usage exceeds a defined threshold.
 
 ## Why it exists
