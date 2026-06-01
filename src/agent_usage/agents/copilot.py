@@ -13,12 +13,13 @@ import requests
 
 from agent_usage.agents.base import Agent, SessionInfo, UsageFetchError
 
-_PLANS: dict[str, int] = {
-    "free": 50,
-    "pro": 300,
-    "pro+": 1500,
-    "business": 300,
-    "enterprise": 1000,
+# AI Credits allowance: base + flex
+_PLANS_AI_CREDITS: dict[str, int] = {
+    "pro": 1500,
+    "pro+": 7000,
+    "max": 20000,
+    "business": 1900,
+    "enterprise": 3900,
 }
 
 
@@ -70,10 +71,10 @@ class CopilotProvider(Agent):
     def __init__(self, plan: str, limit: int | None = None) -> None:
         self._plan = plan
         try:
-            self._limit = limit if limit is not None else _PLANS[plan]
+            self._limit = limit if limit is not None else _PLANS_AI_CREDITS[plan]
         except KeyError as exc:
             raise ValueError(
-                f"Unknown Copilot plan '{plan}'; known plans: {list(_PLANS.keys())}, exception: {exc}"
+                f"Unknown Copilot plan '{plan}'; known plans: {list(_PLANS_AI_CREDITS.keys())}, exception: {exc}"
             ) from exc
 
     def detect(self) -> bool:
@@ -87,7 +88,7 @@ class CopilotProvider(Agent):
         year = now.year
         month = str(now.month).zfill(2)
 
-        path = f"/users/{username}/settings/billing/premium_request/usage?year={year}&month={month}"
+        path = f"/users/{username}/settings/billing/usage?year={year}&month={month}"
         try:
             resp = requests.get(
                 f"https://api.github.com{path}",
@@ -112,7 +113,7 @@ class CopilotProvider(Agent):
         items = data.get("usageItems") or []
         if len(items) == 0:
             raise UsageFetchError("No usage items found in Copilot billing response")
-        total = sum(item.get("grossQuantity", 0) for item in items)
+        total = sum(item.get("quantity", 0) for item in items)
         pct = total / self._limit * 100 if self._limit else 0.0
         return {"monthly": round(pct, 2)}
 

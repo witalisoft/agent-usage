@@ -30,6 +30,6 @@ agents:
     # Copilot percent = totalUsage / limit * 100. GitHub does NOT report the
     # plan, so set it here (default pro/300). `limit` overrides `plan`.
     plan: pro                    # pro | business | enterprise | ...
-    # limit: 300                 # explicit monthly premium-request quota
+    # limit: 300                 # explicit monthly AI credits quota
     # Known metric: monthly.
     scripts: []

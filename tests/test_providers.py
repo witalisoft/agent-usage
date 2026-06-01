@@ -55,12 +55,11 @@ def test_copilot_percent_calculation():
         mock_get.return_value.status_code = 200
         mock_get.return_value.json.return_value = {
             "usageItems": [
-                {"grossQuantity": 100},
-                {"grossQuantity": 50},
+                {"quantity": 150},
             ]
         }
         result = provider.get_usage()
-    assert result["monthly"] == pytest.approx(50.0)  # 150/300*100
+    assert result["monthly"] == pytest.approx(10.0)
 
 
 def test_copilot_parse_empty():
