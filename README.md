@@ -22,7 +22,7 @@ Developers today often run multiple AI coding agents side by side — Claude Cod
 | Agent | Metrics tracked |
 |---|---|
 | Claude Code | 5-hour window, 7-day rolling |
-| GitHub Copilot CLI | Monthly premium requests |
+| GitHub Copilot CLI | Monthly AI credits requests |
 | OpenAI Codex | 5-hour window, weekly |
 
 ## Authentication
