@@ -102,7 +102,7 @@ def show_menu(agents: list[Agent], cfg: Config, db: Database, cwd: str) -> MenuC
     metrics_w = max(len(r[1]) for r in agent_rows)
     sess_count_w = max(len(str(r[2])) for r in agent_rows)
 
-    choices: list = [{"name": "── Agents ──", "value": None, "disabled": ""}]
+    choices: list = [Choice(value=None, name="── Agents ──")]
 
     for agent, metrics, sessions_30d, last_used in agent_rows:
         name_col = agent.name.upper().ljust(agent_name_w)
@@ -127,12 +127,20 @@ def show_menu(agents: list[Agent], cfg: Config, db: Database, cwd: str) -> MenuC
             mc = MenuChoice(agent=agent, session_id=info.session_id)
             choices.append(Choice(value=mc, name=title))
 
+    # Start cursor on the most recently used agent (skip separator at index 0).
+    last_used_times = [db.last_used(a.name) or "" for a in agents]
+    best_agent_pos = max(range(len(agents)), key=lambda i: last_used_times[i])
+    initial_index = best_agent_pos + 1  # +1 for the separator choice at index 0
+
     try:
-        return inquirer.fuzzy(
+        prompt = inquirer.fuzzy(
             message="Pick an agent or session (↑↓ or type to filter):",
             choices=choices,
             max_height="70%",
             mandatory=False,
-        ).execute()
+            raise_keyboard_interrupt=True,
+        )
+        prompt.content_control._selected_choice_index = initial_index
+        return prompt.execute()
     except KeyboardInterrupt:
         return None
