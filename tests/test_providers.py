@@ -341,6 +341,99 @@ def test_save_keychain_credentials_non_darwin(monkeypatch):
         mock_run.assert_not_called()
 
 
+def test_ensure_fresh_credentials_env_token_skips_refresh(monkeypatch):
+    """CLAUDE_CODE_OAUTH_TOKEN is used as-is: no file/Keychain load, no refresh."""
+    from agent_usage.agents.claude import _ensure_fresh_credentials
+
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "env-tok")
+
+    with (
+        patch("agent_usage.agents.claude._load_credentials") as mock_load,
+        patch("agent_usage.agents.claude._load_keychain_credentials") as mock_kc,
+        patch("agent_usage.agents.claude._refresh_access_token") as mock_refresh,
+    ):
+        result = _ensure_fresh_credentials()
+
+    assert result == {"accessToken": "env-tok"}
+    mock_load.assert_not_called()
+    mock_kc.assert_not_called()
+    mock_refresh.assert_not_called()
+
+
+def test_claude_parse_ratelimit_headers():
+    from agent_usage.agents.claude import _parse_ratelimit_headers
+
+    headers = {
+        "anthropic-ratelimit-unified-5h-utilization": "0.25",
+        "anthropic-ratelimit-unified-7d-utilization": "0.24",
+        "anthropic-ratelimit-unified-status": "allowed",
+    }
+    assert _parse_ratelimit_headers(headers) == {"5h": 25.0, "7day": 24.0}
+    assert _parse_ratelimit_headers({}) == {}
+
+
+def _probe_response(status: int, headers: dict[str, str]) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status
+    resp.headers = headers
+    resp.text = ""
+    return resp
+
+
+def test_claude_get_usage_env_token_reads_ratelimit_headers(monkeypatch):
+    """With CLAUDE_CODE_OAUTH_TOKEN, usage comes from /v1/messages headers, not /api/oauth/usage."""
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "env-tok")
+    resp = _probe_response(
+        200,
+        {
+            "anthropic-ratelimit-unified-5h-utilization": "0.5",
+            "anthropic-ratelimit-unified-7d-utilization": "0.1",
+        },
+    )
+
+    with (
+        patch("agent_usage.agents.claude.requests.post", return_value=resp) as mock_post,
+        patch("agent_usage.agents.claude.requests.get") as mock_get,
+    ):
+        result = ClaudeProvider().get_usage()
+
+    assert result == {"5h": 50.0, "7day": 10.0}
+    mock_get.assert_not_called()
+    url = mock_post.call_args.args[0]
+    assert url.endswith("/v1/messages")
+    sent_headers = mock_post.call_args.kwargs["headers"]
+    assert sent_headers["Authorization"] == "Bearer env-tok"
+    assert sent_headers["anthropic-version"] == "2023-06-01"
+    assert mock_post.call_args.kwargs["json"]["max_tokens"] == 1
+
+
+def test_claude_get_usage_env_token_limit_reached_429(monkeypatch):
+    """A 429 from the exhausted subscription limit still reports utilization."""
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "env-tok")
+    resp = _probe_response(
+        429,
+        {
+            "anthropic-ratelimit-unified-5h-utilization": "1.0",
+            "anthropic-ratelimit-unified-7d-utilization": "0.6",
+        },
+    )
+
+    with patch("agent_usage.agents.claude.requests.post", return_value=resp):
+        result = ClaudeProvider().get_usage()
+
+    assert result == {"5h": 100.0, "7day": 60.0}
+
+
+def test_claude_get_usage_env_token_missing_headers(monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "env-tok")
+
+    with (
+        patch("agent_usage.agents.claude.requests.post", return_value=_probe_response(200, {})),
+        pytest.raises(UsageFetchError, match="no rate-limit headers"),
+    ):
+        ClaudeProvider().get_usage()
+
+
 def test_ensure_fresh_credentials_keychain_saves_back(monkeypatch):
     """Refreshed tokens from Keychain are written back to Keychain, not only
     to the credentials file."""

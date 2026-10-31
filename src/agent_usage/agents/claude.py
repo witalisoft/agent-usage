@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -15,8 +16,26 @@ import requests
 from agent_usage.agents.base import Agent, SessionInfo, UsageFetchError
 
 _CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
+_ENV_CREDENTIALS = "CLAUDE_CODE_OAUTH_TOKEN"
 _API_BASE = "https://api.anthropic.com"
 _USAGE_ENDPOINT = "/api/oauth/usage"
+
+# Fallback for CLAUDE_CODE_OAUTH_TOKEN (``claude setup-token``): that token only
+# carries the ``user:inference`` scope, so /api/oauth/usage answers 403
+# (needs ``user:profile``). Instead send a minimal inference request and read
+# the unified rate-limit headers from the response.
+_MESSAGES_ENDPOINT = "/v1/messages"
+_PROBE_MODEL = "claude-haiku-5-5"
+_PROBE_PAYLOAD = {
+    "model": _PROBE_MODEL,
+    "max_tokens": 1,
+    "system": "You are Claude Code, Anthropic's official CLI for Claude.",
+    "messages": [{"role": "user", "content": "hi"}],
+}
+_RATELIMIT_HEADERS = {
+    "5h": "anthropic-ratelimit-unified-5h-utilization",
+    "7day": "anthropic-ratelimit-unified-7d-utilization",
+}
 
 # OAuth token refresh — mirrors the Codex proactive-refresh pattern.
 # Endpoint and client ID extracted from the Claude Code binary.
@@ -30,6 +49,14 @@ _BACKOFF_MAX = 3600
 def _cwd_slug(cwd: str) -> str:
     """Convert absolute path to Claude projects dir slug."""
     return cwd.replace("/", "-")
+
+
+def _env_credentials() -> dict[str, str] | None:
+    """Return credentials built from the env token, or ``None`` if unset."""
+    token = os.getenv(_ENV_CREDENTIALS)
+    if token:
+        return {"accessToken": token}
+    return None
 
 
 def _load_credentials() -> dict[str, str] | None:
@@ -222,6 +249,8 @@ def _refresh_access_token(creds: dict[str, str]) -> dict[str, str]:
 def _ensure_fresh_credentials() -> dict[str, str]:
     """Load credentials, refresh proactively if expired, persist, and return.
 
+    If ``CLAUDE_CODE_OAUTH_TOKEN`` is set it is used as-is (no refresh).
+
     Refresh order (mirrors Codex ``ensure_fresh_auth``, extended for Keychain):
     1. Load from file; if not expired return immediately.
     2. If expired: attempt OAuth refresh via the file's ``refreshToken``.
@@ -239,6 +268,10 @@ def _ensure_fresh_credentials() -> dict[str, str]:
     Raises:
         UsageFetchError: When credentials cannot be loaded or refreshed.
     """
+    # Env token is long-lived and managed externally; never refreshed or persisted.
+    if env_creds := _env_credentials():
+        return env_creds
+
     file_creds = _load_credentials()
     creds = file_creds or _load_keychain_credentials()
     if not creds:
@@ -340,17 +373,36 @@ class ClaudeProvider(Agent):
             raise UsageFetchError(f"Claude API in backoff for {self._backoff_until - time.time():.0f}s")
 
         headers = _auth_headers(creds)
-        url = f"{_API_BASE}{_USAGE_ENDPOINT}"
+        from_env = _env_credentials() is not None
 
         for attempt in range(3):
             try:
-                resp = requests.get(url, headers=headers, timeout=10)
+                if from_env:
+                    resp = requests.post(
+                        f"{_API_BASE}{_MESSAGES_ENDPOINT}",
+                        headers={**headers, "anthropic-version": "2023-06-01"},
+                        json=_PROBE_PAYLOAD,
+                        timeout=10,
+                    )
+                    # A 429 caused by the subscription limit itself still carries
+                    # the rate-limit headers (utilization at/above 100%).
+                    if resp.status_code in (200, 429) and (usage := _parse_ratelimit_headers(resp.headers)):
+                        self._consecutive_429s = 0
+                        self._backoff_until = 0.0
+                        return usage
+                else:
+                    resp = requests.get(f"{_API_BASE}{_USAGE_ENDPOINT}", headers=headers, timeout=10)
+                    if resp.status_code == 200:
+                        self._consecutive_429s = 0
+                        self._backoff_until = 0.0
+                        return _parse_usage(resp.json())
+
                 if resp.status_code == 200:
-                    self._consecutive_429s = 0
-                    self._backoff_until = 0.0
-                    return _parse_usage(resp.json())
+                    raise UsageFetchError("Claude response has no rate-limit headers")
                 elif resp.status_code == 401:
                     raise UsageFetchError("Claude token expired (401); run 'claude' to refresh")
+                elif resp.status_code == 403 and "oauth_scope_insufficient" in resp.text:
+                    raise UsageFetchError(f"Claude token lacks required OAuth scope (403): {resp.text}")
                 elif resp.status_code == 429:
                     if attempt < 2:
                         time.sleep(4 * (2**attempt))
@@ -413,4 +465,22 @@ def _parse_usage(data: dict) -> dict[str, float]:
         result["7day_opus"] = float(util)
     if not result:
         raise UsageFetchError("Claude usage response has no utilization fields")
+    return result
+
+
+def _parse_ratelimit_headers(headers) -> dict[str, float]:
+    """Extract utilization percents (0-100) from unified rate-limit headers.
+
+    Header values are fractions (``0.25`` = 25%). Returns an empty dict when
+    none of the expected headers are present.
+    """
+    result: dict[str, float] = {}
+    for metric, header in _RATELIMIT_HEADERS.items():
+        value = headers.get(header)
+        if value is None:
+            continue
+        try:
+            result[metric] = float(value) * 100
+        except ValueError:
+            continue
     return result
